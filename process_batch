@@ -1,0 +1,50 @@
+import boto3
+
+dynamo_client = boto3.resource('dynamodb')
+table = dynamo_client.Table('your-table-name')
+
+def process_batch(segment):
+    print(f"🔄 Starting segment {segment}")
+    response = table.scan(
+        Segment=segment,
+        TotalSegments=5,  # Parallelized into 5 segments
+        Limit=100         # Optional: you can tune or remove this
+    )
+    items = response['Items']
+
+    # Insert into OpenSearch here
+    for item in items:
+        # index_to_opensearch(item)  # your existing insert logic
+        pass
+
+    print(f"✅ Finished segment {segment}")
+    return f"Segment {segment} done"
+
+
+
+
+
+
+import concurrent.futures
+import time
+
+def lambda_handler(event, context):
+    start_time = time.time()
+
+    segments = list(range(5))  # Segment 0 to 4
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
+        futures = [executor.submit(process_batch, segment) for segment in segments]
+
+        for future in concurrent.futures.as_completed(futures):
+            try:
+                result = future.result()
+                print(result)
+            except Exception as e:
+                print(f"❌ Error: {e}")
+
+    execution_time = time.time() - start_time
+    return {
+        'statusCode': 200,
+        'body': f"Processed in {execution_time:.2f} seconds"
+    }
