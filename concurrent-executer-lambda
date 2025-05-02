@@ -1,0 +1,23 @@
+def lambda_handler(event, context):
+    """Main handler."""
+    start_time = time.time()  # ⏱️ Start timer
+
+    items = fetch_all_items()
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
+        futures = [executor.submit(index_to_opensearch, item) for item in items]
+
+        for future in concurrent.futures.as_completed(futures):
+            try:
+                result = future.result()
+                print(f"Indexed document: {result['_id']}")
+            except Exception as e:
+                print(f"Failed to index document: {e}")
+
+    end_time = time.time()  # ⏱️ End timer
+    execution_time = end_time - start_time
+
+    return {
+        'statusCode': 200,
+        'body': f'Successfully processed {len(items)} records in {execution_time:.2f} seconds.'
+    }
