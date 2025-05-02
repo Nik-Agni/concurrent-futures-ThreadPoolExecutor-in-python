@@ -1,0 +1,70 @@
+import boto3
+import concurrent.futures
+from boto3.dynamodb.conditions import Key
+import time
+from queue import Queue
+
+dynamo = boto3.resource('dynamodb')
+table = dynamo.Table('your-table-name')
+
+PARTITION_KEY = 'your-partition-key-name'
+PARTITION_VALUE = 'your-partition-value'  # constant if querying one partition
+PAGE_SIZE = 100
+THREADS = 5
+
+# Worker function for a single query call
+def process_page(start_key=None):
+    query_args = {
+        'KeyConditionExpression': Key(PARTITION_KEY).eq(PARTITION_VALUE),
+        'Limit': PAGE_SIZE
+    }
+
+    if start_key:
+        query_args['ExclusiveStartKey'] = start_key
+
+    response = table.query(**query_args)
+    items = response.get('Items', [])
+
+    # Send to OpenSearch
+    for item in items:
+        # index_to_opensearch(item)  # Use your actual function here
+        pass
+
+    return response.get('LastEvaluatedKey')
+
+# Main loop to fill thread pool in batches
+def lambda_handler(event, context):
+    start_time = time.time()
+
+    next_start_key = None
+    total_processed = 0
+
+    while True:
+        # Run up to 5 query calls in parallel
+        with concurrent.futures.ThreadPoolExecutor(max_workers=THREADS) as executor:
+            futures = []
+            for _ in range(THREADS):
+                futures.append(executor.submit(process_page, next_start_key))
+                next_start_key = None  # Only first call uses initial key
+
+            # Collect last evaluated keys
+            last_keys = []
+            for future in futures:
+                lek = future.result()
+                if lek:
+                    last_keys.append(lek)
+                total_processed += PAGE_SIZE
+
+        # Prepare for next round
+        if not last_keys:
+            break  # All data processed
+
+        # Use only one of the returned LEKs to continue
+        # (Because we're querying same partition key, they overlap)
+        next_start_key = last_keys[-1]  # Continue from the last thread's LEK
+
+    elapsed = time.time() - start_time
+    return {
+        'statusCode': 200,
+        'body': f'✅ Indexed approx {total_processed} records in {elapsed:.2f} seconds.'
+    }
